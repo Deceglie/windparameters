@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Point Drainage Forecast</title>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 1.5rem;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #1a1a1a;
+            margin-bottom: 1.5rem;
+        }
+        .locations-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 1.5rem;
+        }
+        .location-section {
+            background-color: #f1f5f9;
+            padding: 1.25rem;
+            border-radius: 8px;
+        }
+        .location-section h3 {
+            margin-top: 0;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: #0f172a;
+        }
+        .input-group {
+            margin-bottom: 1rem;
+        }
+        .input-group:last-child {
+            margin-bottom: 0;
+        }
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+            font-size: 0.9rem;
+        }
+        input {
+            width: 100%;
+            padding: 0.6rem;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+        button {
+            width: 100%;
+            padding: 0.875rem;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-bottom: 1.5rem;
+        }
+        button:hover {
+            background-color: #0052a3;
+        }
+        #result {
+            border-radius: 8px;
+            background-color: #fff;
+            border: 1px solid #e2e8f0;
+            display: none;
+            overflow: hidden;
+            margin-top: 2rem;
+        }
+        #plots {
+            width: 100%;
+            margin-bottom: 2rem;
+        }
+        .table-container {
+            max-height: 600px;
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+        .loader {
+            display: inline-block;
+            font-style: italic;
+            color: #666;
+            padding: 1.25rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+        th, td {
+            padding: 8px 10px;
+            border: 1px solid #dee2e6;
+            white-space: nowrap;
+        }
+        th {
+            position: sticky;
+            background-color: #eef2f5;
+            font-weight: 600;
+            z-index: 2;
+        }
+        thead tr:nth-child(1) th {
+            top: 0;
+        }
+        thead tr:nth-child(2) th {
+            top: 36px;
+        }
+        td {
+            background-color: #fff;
+        }
+        tr:nth-child(even) td {
+            background-color: #f8fafc;
+        }
+        .time-col {
+            font-weight: 600;
+            text-align: left;
+            background-color: #f1f5f9;
+        }
+        .error {
+            padding: 1.25rem;
+            color: #dc2626;
+            background-color: #fef2f2;
+        }
+        .nws-badge {
+            font-size: 0.75rem;
+            background: #dbeafe;
+            color: #1e3a8a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 4px;
+        }
+        @media (max-width: 900px) {
+            .locations-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Multi-Point Drainage Forecast</h2>
+        
+        <div class="locations-grid">
+            <div class="location-section">
+                <h3>Location 1 (Upper)</h3>
+                <div class="input-group">
+                    <label for="lat1">Latitude (Echo Lake)</label>
+                    <input type="number" id="lat1" step="0.0001" value="39.6596">
+                </div>
+                <div class="input-group">
+                    <label for="lon1">Longitude (Echo Lake)</label>
+                    <input type="number" id="lon1" step="0.0001" value="-105.5979">
+                </div>
+            </div>
+            
+            <div class="location-section">
+                <h3>Location 2 (Lower)</h3>
+                <div class="input-group">
+                    <label for="lat2">Latitude (Morrison)</label>
+                    <input type="number" id="lat2" step="0.0001" value="39.6536">
+                </div>
+                <div class="input-group">
+                    <label for="lon2">Longitude (Morrison)</label>
+                    <input type="number" id="lon2" step="0.0001" value="-105.1911">
+                </div>
+            </div>
+        </div>
+        
+        <button onclick="fetchData()">Compare Forecasts</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        function getWindDir(degrees) {
+            const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+            return dirs[Math.round(degrees / 22.5) % 16];
+        }
+
+        // Helper to query NWS Grid Data
+        async function getNWSData(lat, lon) {
+            try {
+                // Step 1: Hit NWS Points API to get the correct grid URL
+                const ptRes = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
+                if (!ptRes.ok) return null;
+                const ptData = await ptRes.json();
+                
+                // Step 2: Hit the Grid Data URL for the raw hourly variables
+                const gridUrl = ptData.properties.forecastGridData;
+                const gridRes = await fetch(gridUrl);
+                if (!gridRes.ok) return null;
+                const gridData = await gridRes.json();
+                
+                return gridData.properties;
+            } catch (err) {
+                console.error("NWS Fetch Error:", err);
+                return null;
+            }
+        }
+
+        // Helper to match an exact target time against NWS duration blocks (e.g. 2026-09-19T12:00:00+00:00/PT2H)
+        function getNWSValueForTime(nwsProperty, targetTimeStr) {
+            if (!nwsProperty || !nwsProperty.values) return null;
+            
+            const targetTime = new Date(targetTimeStr + 'Z').getTime();
+
+            for (let item of nwsProperty.values) {
+                const parts = item.validTime.split('/');
+                const startTimeStr = parts[0];
+                const durationStr = parts[1];
+                
+                const start = new Date(startTimeStr).getTime();
+                let end = start + 3600000; // default to 1 hour window
+                
+                if (durationStr) {
+                    let days = 0, hours = 0;
+                    const dMatch = durationStr.match(/(\d+)D/);
+                    if (dMatch) days = parseInt(dMatch[1]);
+                    const hMatch = durationStr.match(/(\d+)H/);
+                    if (hMatch) hours = parseInt(hMatch[1]);
+                    end = start + (days * 24 + hours) * 3600000;
+                }
+
+                if (targetTime >= start && targetTime < end) {
+                    return item.value;
+                }
+            }
+            return null;
+        }
+
+        async function fetchData() {
+            const lat1 = document.getElementById('lat1').value;
+            const lon1 = document.getElementById('lon1').value;
+            const lat2 = document.getElementById('lat2').value;
+            const lon2 = document.getElementById('lon2').value;
+            const resDiv = document.getElementById('result');
+
+            resDiv.style.display = "block";
+            resDiv.innerHTML = '<span class="loader">Querying NWS & HRRR models for both locations...</span>';
+
+
+            // Open-Meteo for PBLH and Winds, now restricted to a rolling 24 hours
+            const baseParams = "hourly=boundary_layer_height,wind_speed_10m,wind_direction_10m&forecast_hours=24&wind_speed_unit=mph&timezone=UTC&daily=sunrise";
+            const url1 = `https://api.open-meteo.com/v1/gfs?latitude=${lat1}&longitude=${lon1}&${baseParams}`;
+            const url2 = `https://api.open-meteo.com/v1/gfs?latitude=${lat2}&longitude=${lon2}&${baseParams}`;
+
+            try {
+                // Fetch all data in parallel to save time
+                const [resp1, resp2, nws1, nws2] = await Promise.all([
+                    fetch(url1).then(r => r.json()),
+                    fetch(url2).then(r => r.json()),
+                    getNWSData(lat1, lon1),
+                    getNWSData(lat2, lon2)
+                ]);
+                
+                if (!resp1.hourly || !resp2.hourly) {
+                    throw new Error(`Failed to load primary HRRR data.`);
+                }
+                
+                const times = resp1.hourly.time; 
+                
+                let html = `<div id="plots"></div><div class="table-container">`;
+                html += `<table>`;
+                html += `
+                    <thead>
+                        <tr>
+                            <th rowspan="2" style="z-index: 3; border-right: 2px solid #cbd5e1;">Time (Mountain)</th>
+                            <th colspan="5" style="border-right: 2px solid #cbd5e1;">Location 1 (Upper)</th>
+                            <th colspan="5">Location 2 (Lower)</th>
+                        </tr>
+                        <tr>
+                            <th>Temp (°F)<span class="nws-badge">NWS</span></th>
+                            <th>Sky (%)<span class="nws-badge">NWS</span></th>
+                            <th>PBLH (m)</th>
+                            <th>Wind (mph)</th>
+                            <th style="border-right: 2px solid #cbd5e1;">Dir</th>
+                            <th>Temp (°F)<span class="nws-badge">NWS</span></th>
+                            <th>Sky (%)<span class="nws-badge">NWS</span></th>
+                            <th>PBLH (m)</th>
+                            <th>Wind (mph)</th>
+                            <th>Dir</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+
+                let plotData = {
+                    times: [],
+                    pblh1: [], pblh2: [],
+                    sky1: [], sky2: [],
+                    temp1: [], temp2: [],
+                    ws1: [], ws2: []
+                };
+
+                times.forEach((t, i) => {
+                    const date = new Date(t + 'Z'); 
+                    
+                    const timeStr = date.toLocaleString('en-US', {
+                        timeZone: 'America/Denver',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                        timeZoneName: 'short'
+                    });
+
+                    // Location 1 Data 
+                    let valTemp1 = '--', valSky1 = '--';
+                    let pTemp1 = null, pSky1 = null;
+                    if (nws1) {
+                        const tempC = getNWSValueForTime(nws1.temperature, t);
+                        if (tempC !== null) {
+                            pTemp1 = (tempC * 9/5) + 32;
+                            valTemp1 = Math.round(pTemp1);
+                        }
+                        
+                        const sky = getNWSValueForTime(nws1.skyCover, t);
+                        if (sky !== null) {
+                            pSky1 = sky;
+                            valSky1 = Math.round(sky);
+                        }
+                    }
+
+                    const pPBLH1 = resp1.hourly.boundary_layer_height[i];
+                    const valPBLH1 = pPBLH1 !== null ? pPBLH1 : '--';
+                    const pWS1 = resp1.hourly.wind_speed_10m[i];
+                    const valWS1 = pWS1 !== null ? pWS1.toFixed(1) : '--';
+                    const valWD1 = resp1.hourly.wind_direction_10m[i] !== null ? getWindDir(resp1.hourly.wind_direction_10m[i]) : '--';
+
+                    // Location 2 Data
+                    let valTemp2 = '--', valSky2 = '--';
+                    let pTemp2 = null, pSky2 = null;
+                    if (nws2) {
+                        const tempC = getNWSValueForTime(nws2.temperature, t);
+                        if (tempC !== null) {
+                            pTemp2 = (tempC * 9/5) + 32;
+                            valTemp2 = Math.round(pTemp2);
+                        }
+                        
+                        const sky = getNWSValueForTime(nws2.skyCover, t);
+                        if (sky !== null) {
+                            pSky2 = sky;
+                            valSky2 = Math.round(sky);
+                        }
+                    }
+
+                    const pPBLH2 = resp2.hourly.boundary_layer_height[i];
+                    const valPBLH2 = pPBLH2 !== null ? pPBLH2 : '--';
+                    const pWS2 = resp2.hourly.wind_speed_10m[i];
+                    const valWS2 = pWS2 !== null ? pWS2.toFixed(1) : '--';
+                    const valWD2 = resp2.hourly.wind_direction_10m[i] !== null ? getWindDir(resp2.hourly.wind_direction_10m[i]) : '--';
+
+                    plotData.times.push(date);
+                    plotData.pblh1.push(pPBLH1);
+                    plotData.pblh2.push(pPBLH2);
+                    plotData.sky1.push(pSky1);
+                    plotData.sky2.push(pSky2);
+                    plotData.temp1.push(pTemp1);
+                    plotData.temp2.push(pTemp2);
+                    plotData.ws1.push(pWS1);
+                    plotData.ws2.push(pWS2);
+
+                    html += `<tr>
+                        <td class="time-col" style="border-right: 2px solid #cbd5e1;">${timeStr}</td>
+                        <td>${valTemp1}</td>
+                        <td>${valSky1}</td>
+                        <td>${valPBLH1}</td>
+                        <td>${valWS1}</td>
+                        <td style="border-right: 2px solid #cbd5e1;">${valWD1}</td>
+                        <td>${valTemp2}</td>
+                        <td>${valSky2}</td>
+                        <td>${valPBLH2}</td>
+                        <td>${valWS2}</td>
+                        <td>${valWD2}</td>
+                    </tr>`;
+                });
+
+                html += `</tbody></table></div>`;
+                resDiv.innerHTML = html;
+
+
+                // Render Plots
+                const trace_pblh1 = { x: plotData.times, y: plotData.pblh1, name: 'Upper', legendgroup: 'upper', type: 'scatter', mode: 'lines+markers', line: {color: '#1f77b4'} };
+                const trace_pblh2 = { x: plotData.times, y: plotData.pblh2, name: 'Lower', legendgroup: 'lower', type: 'scatter', mode: 'lines+markers', line: {color: '#ff7f0e'} };
+
+                const trace_sky1 = { x: plotData.times, y: plotData.sky1, name: 'Upper', legendgroup: 'upper', showlegend: false, xaxis: 'x', yaxis: 'y2', type: 'scatter', mode: 'lines+markers', line: {color: '#1f77b4', dash: 'dash'} };
+                const trace_sky2 = { x: plotData.times, y: plotData.sky2, name: 'Lower', legendgroup: 'lower', showlegend: false, xaxis: 'x', yaxis: 'y2', type: 'scatter', mode: 'lines+markers', line: {color: '#ff7f0e', dash: 'dash'} };
+
+                const trace_temp1 = { x: plotData.times, y: plotData.temp1, name: 'Upper', legendgroup: 'upper', showlegend: false, xaxis: 'x', yaxis: 'y3', type: 'scatter', mode: 'lines+markers', line: {color: '#1f77b4'} };
+                const trace_temp2 = { x: plotData.times, y: plotData.temp2, name: 'Lower', legendgroup: 'lower', showlegend: false, xaxis: 'x', yaxis: 'y3', type: 'scatter', mode: 'lines+markers', line: {color: '#ff7f0e'} };
+
+                const trace_ws1 = { x: plotData.times, y: plotData.ws1, name: 'Upper', legendgroup: 'upper', showlegend: false, xaxis: 'x', yaxis: 'y4', type: 'scatter', mode: 'lines+markers', line: {color: '#1f77b4'} };
+                const trace_ws2 = { x: plotData.times, y: plotData.ws2, name: 'Lower', legendgroup: 'lower', showlegend: false, xaxis: 'x', yaxis: 'y4', type: 'scatter', mode: 'lines+markers', line: {color: '#ff7f0e'} };
+
+                let shapes = [];
+                if (resp1.daily && resp1.daily.sunrise) {
+                    resp1.daily.sunrise.forEach(sr => {
+                        let srDate = new Date(sr + 'Z');
+                        if (!sr.includes('T')) {
+                           srDate = new Date(sr);
+                        } else if (!sr.endsWith('Z')) {
+                           srDate = new Date(sr + 'Z');
+                        }
+                        
+                        shapes.push({
+                            type: 'line',
+                            x0: srDate,
+                            x1: srDate,
+                            y0: 0,
+                            y1: 1,
+                            xref: 'x',
+                            yref: 'paper',
+                            line: {
+                                color: 'orange',
+                                width: 2,
+                                dash: 'dot'
+                            }
+                        });
+                    });
+                }
+
+                const layout = {
+                    title: 'Forecast Trends',
+                    grid: {rows: 4, columns: 1, pattern: 'independent'},
+                    height: 800,
+                    showlegend: true,
+                    shapes: shapes,
+                    margin: { t: 50, b: 50, l: 50, r: 50 },
+                    yaxis: {title: 'PBLH (m)', domain: [0.78, 1]},
+                    yaxis2: {title: 'Sky (%)', domain: [0.52, 0.74]},
+                    yaxis3: {title: 'Temp (°F)', domain: [0.26, 0.48]},
+                    yaxis4: {title: 'Wind (mph)', domain: [0, 0.22]},
+                    xaxis: { 
+                        type: 'date',
+                        range: [plotData.times[0], plotData.times[plotData.times.length - 1]]
+                    }
+                };
+
+
+                const data = [trace_pblh1, trace_pblh2, trace_sky1, trace_sky2, trace_temp1, trace_temp2, trace_ws1, trace_ws2];
+                Plotly.newPlot('plots', data, layout, {responsive: true});
+
+            } catch (e) {
+                resDiv.innerHTML = `<div class='error'>Error fetching data: ${e.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
