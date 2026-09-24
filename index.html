@@ -262,7 +262,7 @@
 
 
             // Open-Meteo for PBLH and Winds, now restricted to a rolling 24 hours
-            const baseParams = "hourly=boundary_layer_height,wind_speed_10m,wind_direction_10m&forecast_hours=24&wind_speed_unit=mph&timezone=UTC&daily=sunrise";
+            const baseParams = "hourly=boundary_layer_height,wind_speed_10m,wind_direction_10m&past_hours=1&forecast_hours=36&wind_speed_unit=mph&timezone=UTC&daily=sunrise";
             const url1 = `https://api.open-meteo.com/v1/gfs?latitude=${lat1}&longitude=${lon1}&${baseParams}`;
             const url2 = `https://api.open-meteo.com/v1/gfs?latitude=${lat2}&longitude=${lon2}&${baseParams}`;
 
