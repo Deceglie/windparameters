@@ -251,6 +251,75 @@
             margin-left: 4px;
         }
 
+        /* Sunrise Zoom Controls */
+        .zoom-toolbar {
+            margin: 1.25rem 0 0.75rem 0;
+            padding: 0.85rem 1.15rem;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+        .zoom-toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .zoom-toolbar-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+        .zoom-toolbar-sub {
+            font-size: 0.8rem;
+            color: #64748b;
+            font-weight: normal;
+        }
+        .zoom-buttons-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .sunrise-zoom-btn {
+            padding: 0.45rem 0.85rem;
+            background-color: #ffffff;
+            color: #334155;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+        .sunrise-zoom-btn:hover {
+            background-color: #f1f5f9;
+            border-color: #94a3b8;
+            color: #0f172a;
+        }
+        .sunrise-zoom-btn.active {
+            background-color: #0066cc;
+            color: #ffffff;
+            border-color: #0052a3;
+            font-weight: 600;
+            box-shadow: 0 1px 3px rgba(0, 102, 204, 0.3);
+        }
+        .sunrise-zoom-btn .sr-icon {
+            font-size: 0.95rem;
+            line-height: 1;
+        }
+
         @media (max-width: 900px) {
             .locations-grid {
                 grid-template-columns: 1fr;
@@ -317,6 +386,152 @@
 
     <script>
         let cachedMetadata = null;
+        let currentPlotData = null;
+        let currentFullRange = null;
+        let currentSunriseWindows = [];
+
+        function getPointsInWindow(arr1, arr2, windowStart, windowEnd) {
+            const vals = [];
+            if (!currentPlotData || !currentPlotData.times) return vals;
+            const tStart = windowStart.getTime();
+            const tEnd = windowEnd.getTime();
+
+            for (let i = 0; i < currentPlotData.times.length; i++) {
+                const t = currentPlotData.times[i].getTime();
+                // Include data points within the window or within 45 minutes of boundaries
+                // so lines crossing the visible edge are included in vertical scaling
+                if (t >= tStart - 2700000 && t <= tEnd + 2700000) {
+                    if (arr1 && arr1[i] !== null && arr1[i] !== undefined && !isNaN(arr1[i])) vals.push(arr1[i]);
+                    if (arr2 && arr2[i] !== null && arr2[i] !== undefined && !isNaN(arr2[i])) vals.push(arr2[i]);
+                }
+            }
+            return vals;
+        }
+
+        function getPBLHRange(vals) {
+            if (!vals || vals.length === 0) return null;
+            const min = Math.min(...vals);
+            const max = Math.max(...vals);
+            const span = max - min;
+            const pad = Math.max(25, span * 0.15);
+            const rangeMin = Math.max(0, Math.floor(min - pad));
+            let rangeMax = Math.ceil(max + pad);
+            if (rangeMax <= rangeMin + 50) rangeMax = rangeMin + 100;
+            return [rangeMin, rangeMax];
+        }
+
+        function getSkyRange(vals) {
+            if (!vals || vals.length === 0) return [0, 100];
+            const min = Math.min(...vals);
+            const max = Math.max(...vals);
+            if (min === 0 && max === 0) return [0, 20];
+            let rangeMin = Math.max(0, Math.floor((min - 5) / 5) * 5);
+            let rangeMax = Math.min(100, Math.ceil((max + 5) / 5) * 5);
+            if (rangeMax - rangeMin < 20) {
+                rangeMax = Math.min(100, rangeMin + 20);
+                rangeMin = Math.max(0, rangeMax - 20);
+            }
+            return [rangeMin, rangeMax];
+        }
+
+        function getTempRange(vals) {
+            if (!vals || vals.length === 0) return null;
+            const min = Math.min(...vals);
+            const max = Math.max(...vals);
+            const span = max - min;
+            const pad = Math.max(2, Math.ceil(span * 0.15));
+            let rangeMin = Math.floor(min - pad);
+            let rangeMax = Math.ceil(max + pad);
+            if (rangeMax - rangeMin < 6) {
+                rangeMin -= 2;
+                rangeMax += 2;
+            }
+            return [rangeMin, rangeMax];
+        }
+
+        function getWindRange(vals) {
+            if (!vals || vals.length === 0) return [0, 15];
+            const min = Math.min(...vals);
+            const max = Math.max(...vals);
+            const span = max - min;
+            const pad = Math.max(1.5, span * 0.2);
+            let rangeMin = (min <= 4) ? 0 : Math.max(0, Math.floor(min - pad));
+            let rangeMax = Math.ceil(max + pad);
+            if (rangeMax <= rangeMin + 3) rangeMax = rangeMin + 5;
+            return [rangeMin, rangeMax];
+        }
+
+        function zoomToSunrise(target) {
+            if (!currentPlotData || !currentFullRange) return;
+
+            document.querySelectorAll('.sunrise-zoom-btn').forEach(b => b.classList.remove('active'));
+
+            const plotElem = document.getElementById('plots');
+            if (!plotElem || !plotElem.data) return;
+
+            if (target === 'all') {
+                const btnAll = document.getElementById('btn-zoom-all');
+                if (btnAll) btnAll.classList.add('active');
+
+                Plotly.relayout('plots', {
+                    'xaxis.range': [currentFullRange.start, currentFullRange.end],
+                    'yaxis.autorange': true,
+                    'yaxis2.autorange': true,
+                    'yaxis3.autorange': true,
+                    'yaxis4.autorange': true
+                });
+                return;
+            }
+
+            const sw = currentSunriseWindows[target];
+            if (!sw) return;
+
+            const btn = document.getElementById(`btn-zoom-${target}`);
+            if (btn) btn.classList.add('active');
+
+            const pblhVals = getPointsInWindow(currentPlotData.pblh1, currentPlotData.pblh2, sw.windowStart, sw.windowEnd);
+            const skyVals = getPointsInWindow(currentPlotData.sky1, currentPlotData.sky2, sw.windowStart, sw.windowEnd);
+            const tempVals = getPointsInWindow(currentPlotData.temp1, currentPlotData.temp2, sw.windowStart, sw.windowEnd);
+            const wsVals = getPointsInWindow(currentPlotData.ws1, currentPlotData.ws2, sw.windowStart, sw.windowEnd);
+
+            const updateObj = {
+                'xaxis.range': [sw.windowStart, sw.windowEnd]
+            };
+
+            const pblhR = getPBLHRange(pblhVals);
+            if (pblhR) {
+                updateObj['yaxis.range'] = pblhR;
+                updateObj['yaxis.autorange'] = false;
+            } else {
+                updateObj['yaxis.autorange'] = true;
+            }
+
+            const skyR = getSkyRange(skyVals);
+            if (skyR) {
+                updateObj['yaxis2.range'] = skyR;
+                updateObj['yaxis2.autorange'] = false;
+            } else {
+                updateObj['yaxis2.autorange'] = true;
+            }
+
+            const tempR = getTempRange(tempVals);
+            if (tempR) {
+                updateObj['yaxis3.range'] = tempR;
+                updateObj['yaxis3.autorange'] = false;
+            } else {
+                updateObj['yaxis3.autorange'] = true;
+            }
+
+            const wsR = getWindRange(wsVals);
+            if (wsR) {
+                updateObj['yaxis4.range'] = wsR;
+                updateObj['yaxis4.autorange'] = false;
+            } else {
+                updateObj['yaxis4.autorange'] = true;
+            }
+
+            Plotly.relayout('plots', updateObj);
+        }
 
         function getWindDir(degrees) {
             if (degrees === null || degrees === undefined || isNaN(degrees)) return '--';
@@ -500,7 +715,7 @@
                     ? `<span class="model-cycle-tag">${getUtcRun(cachedMetadata.initTime)}</span>` 
                     : '';
 
-                let html = `
+                const bannerHtml = `
                     <div class="active-model-banner">
                         <div>
                             <strong>Model:</strong> NOAA RRFS Hourly
@@ -510,29 +725,6 @@
                             <strong>Updated:</strong> ${updateStr}
                         </div>
                     </div>
-                    <div id="plots"></div>
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th rowspan="2" style="z-index: 3; border-right: 2px solid #cbd5e1;">Time (Mountain)</th>
-                                    <th colspan="5" style="border-right: 2px solid #cbd5e1;">Location 1 (Upper)</th>
-                                    <th colspan="5">Location 2 (Lower)</th>
-                                </tr>
-                                <tr>
-                                    <th>Temp (°F)<span class="nws-badge">NWS</span></th>
-                                    <th>Sky (%)<span class="nws-badge">NWS</span></th>
-                                    <th>PBLH (m)<span class="rrfs-badge">RRFS</span></th>
-                                    <th>Wind (mph)<span class="rrfs-badge">RRFS</span></th>
-                                    <th style="border-right: 2px solid #cbd5e1;">Dir</th>
-                                    <th>Temp (°F)<span class="nws-badge">NWS</span></th>
-                                    <th>Sky (%)<span class="nws-badge">NWS</span></th>
-                                    <th>PBLH (m)<span class="rrfs-badge">RRFS</span></th>
-                                    <th>Wind (mph)<span class="rrfs-badge">RRFS</span></th>
-                                    <th>Dir</th>
-                                </tr>
-                            </thead>
-                            <tbody>
                 `;
 
                 let plotData = {
@@ -543,6 +735,8 @@
                     ws1: [], ws2: [],
                     wd1: [], wd2: []
                 };
+
+                let tableRowsHtml = '';
 
                 times.forEach((t, i) => {
                     const date = new Date(t.endsWith('Z') ? t : t + 'Z');
@@ -615,7 +809,7 @@
                     plotData.wd1.push(formatWindDir(windDir1[i]));
                     plotData.wd2.push(formatWindDir(windDir2[i]));
 
-                    html += `<tr>
+                    tableRowsHtml += `<tr>
                         <td class="time-col" style="border-right: 2px solid #cbd5e1;">${timeStr}</td>
                         <td>${valTemp1}</td>
                         <td>${valSky1}</td>
@@ -630,7 +824,119 @@
                     </tr>`;
                 });
 
-                html += `</tbody></table></div>`;
+                // Determine x-axis range from non-null model data
+                const nonNullTimes = plotData.times.filter((t, i) =>
+                    plotData.ws1[i] !== null && plotData.ws1[i] !== undefined
+                );
+                const xStart = nonNullTimes.length > 0 ? nonNullTimes[0] : plotData.times[0];
+                const xEnd   = nonNullTimes.length > 0 ? nonNullTimes[nonNullTimes.length - 1] : plotData.times[plotData.times.length - 1];
+
+                currentPlotData = plotData;
+                currentFullRange = { start: xStart, end: xEnd };
+
+                // Build sunrise zoom windows for each day shown in the forecast
+                currentSunriseWindows = [];
+                if (sunriseData && sunriseData.length > 0) {
+                    sunriseData.forEach(sr => {
+                        let srDate = new Date(sr.endsWith('Z') ? sr : sr + 'Z');
+                        if (!sr.includes('T')) {
+                           srDate = new Date(sr);
+                        }
+
+                        // Hours around sunrise: 1 hour before to 4 hours after
+                        const windowStart = new Date(srDate.getTime() - 1 * 3600 * 1000);
+                        const windowEnd = new Date(srDate.getTime() + 4 * 3600 * 1000);
+
+                        // Only include if window falls within the valid forecast range
+                        if (windowEnd >= xStart && windowStart <= xEnd) {
+                            const timeStr = srDate.toLocaleTimeString('en-US', {
+                                timeZone: 'America/Denver',
+                                hour: 'numeric',
+                                minute: '2-digit',
+                                hour12: true
+                            });
+                            const dayStr = srDate.toLocaleDateString('en-US', {
+                                timeZone: 'America/Denver',
+                                weekday: 'short',
+                                month: 'short',
+                                day: 'numeric'
+                            });
+
+                            currentSunriseWindows.push({
+                                srDate,
+                                windowStart,
+                                windowEnd,
+                                dayStr,
+                                timeStr,
+                                label: `${dayStr} (${timeStr})`
+                            });
+                        }
+                    });
+                }
+
+                let zoomToolbarHtml = '';
+                if (currentSunriseWindows.length > 0) {
+                    let buttonsHtml = `
+                        <button type="button" class="sunrise-zoom-btn active" id="btn-zoom-all" onclick="zoomToSunrise('all')">
+                            All Hours
+                        </button>
+                    `;
+                    currentSunriseWindows.forEach((sw, i) => {
+                        const startStr = sw.windowStart.toLocaleTimeString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', hour12: true });
+                        const endStr = sw.windowEnd.toLocaleTimeString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit', hour12: true });
+                        buttonsHtml += `
+                            <button type="button" class="sunrise-zoom-btn" id="btn-zoom-${i}" onclick="zoomToSunrise(${i})" title="Sunrise: ${sw.timeStr} (Window: ${startStr} - ${endStr})">
+                                <span class="sr-icon">🌅</span> ${sw.label}
+                            </button>
+                        `;
+                    });
+
+                    zoomToolbarHtml = `
+                        <div class="zoom-toolbar">
+                            <div class="zoom-toolbar-left">
+                                <span class="zoom-toolbar-label">
+                                    <span class="sr-icon">☀️</span> Sunrise Zoom:
+                                </span>
+                                <span class="zoom-toolbar-sub">(1h before to 4h after)</span>
+                            </div>
+                            <div class="zoom-buttons-group">
+                                ${buttonsHtml}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                let html = `
+                    ${bannerHtml}
+                    ${zoomToolbarHtml}
+                    <div id="plots"></div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th rowspan="2" style="z-index: 3; border-right: 2px solid #cbd5e1;">Time (Mountain)</th>
+                                    <th colspan="5" style="border-right: 2px solid #cbd5e1;">Location 1 (Upper)</th>
+                                    <th colspan="5">Location 2 (Lower)</th>
+                                </tr>
+                                <tr>
+                                    <th>Temp (°F)<span class="nws-badge">NWS</span></th>
+                                    <th>Sky (%)<span class="nws-badge">NWS</span></th>
+                                    <th>PBLH (m)<span class="rrfs-badge">RRFS</span></th>
+                                    <th>Wind (mph)<span class="rrfs-badge">RRFS</span></th>
+                                    <th style="border-right: 2px solid #cbd5e1;">Dir</th>
+                                    <th>Temp (°F)<span class="nws-badge">NWS</span></th>
+                                    <th>Sky (%)<span class="nws-badge">NWS</span></th>
+                                    <th>PBLH (m)<span class="rrfs-badge">RRFS</span></th>
+                                    <th>Wind (mph)<span class="rrfs-badge">RRFS</span></th>
+                                    <th>Dir</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${tableRowsHtml}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
                 resDiv.innerHTML = html;
 
                 // Render Plots
@@ -696,13 +1002,6 @@
                         });
                     });
                 }
-
-                // Determine x-axis range from non-null model data
-                const nonNullTimes = plotData.times.filter((t, i) =>
-                    plotData.ws1[i] !== null && plotData.ws1[i] !== undefined
-                );
-                const xStart = nonNullTimes.length > 0 ? nonNullTimes[0] : plotData.times[0];
-                const xEnd   = nonNullTimes.length > 0 ? nonNullTimes[nonNullTimes.length - 1] : plotData.times[plotData.times.length - 1];
 
                 const layout = {
                     title: 'Forecast Trends (NOAA RRFS Hourly)',
