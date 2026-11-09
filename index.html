@@ -320,6 +320,52 @@
             line-height: 1;
         }
 
+        /* Navigation Tabs */
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        .nav-tab {
+            padding: 0.75rem 1.35rem;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            margin-bottom: -2px;
+            border-radius: 6px 6px 0 0;
+        }
+        .nav-tab:hover {
+            color: #0066cc;
+            background-color: #f1f5f9;
+        }
+        .nav-tab.active {
+            color: #0066cc;
+            border-bottom-color: #0066cc;
+            background-color: #eff6ff;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .plot-box {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
         @media (max-width: 900px) {
             .locations-grid {
                 grid-template-columns: 1fr;
@@ -352,36 +398,70 @@
             </div>
         </div>
         
-        <!-- Locations Inputs -->
-        <div class="locations-grid">
-            <div class="location-section">
-                <h3>Location 1 (Upper)</h3>
-                <div class="input-group">
-                    <label for="lat1">Latitude (Echo Lake)</label>
-                    <input type="number" id="lat1" step="0.0001" value="39.6596">
+        <!-- Navigation Tabs -->
+        <div class="nav-tabs">
+            <button type="button" class="nav-tab active" id="tab-btn-hourly" onclick="switchTab('hourly')">
+                <span>📊</span> Hourly Drainage Forecast
+            </button>
+            <button type="button" class="nav-tab" id="tab-btn-15min" onclick="switchTab('15min')">
+                <span>⚡</span> RRFS 15-Minute (18h)
+            </button>
+        </div>
+
+        <!-- Tab 1: Hourly Forecast -->
+        <div class="tab-content active" id="tab-content-hourly">
+            <!-- Locations Inputs -->
+            <div class="locations-grid">
+                <div class="location-section">
+                    <h3>Location 1 (Upper)</h3>
+                    <div class="input-group">
+                        <label for="lat1">Latitude (Echo Lake)</label>
+                        <input type="number" id="lat1" step="0.0001" value="39.6596">
+                    </div>
+                    <div class="input-group">
+                        <label for="lon1">Longitude (Echo Lake)</label>
+                        <input type="number" id="lon1" step="0.0001" value="-105.5979">
+                    </div>
                 </div>
-                <div class="input-group">
-                    <label for="lon1">Longitude (Echo Lake)</label>
-                    <input type="number" id="lon1" step="0.0001" value="-105.5979">
+                
+                <div class="location-section">
+                    <h3>Location 2 (Lower)</h3>
+                    <div class="input-group">
+                        <label for="lat2">Latitude (Morrison)</label>
+                        <input type="number" id="lat2" step="0.0001" value="39.6536" onchange="syncLocation2(this.value, 'lat')">
+                    </div>
+                    <div class="input-group">
+                        <label for="lon2">Longitude (Morrison)</label>
+                        <input type="number" id="lon2" step="0.0001" value="-105.1911" onchange="syncLocation2(this.value, 'lon')">
+                    </div>
                 </div>
             </div>
             
-            <div class="location-section">
-                <h3>Location 2 (Lower)</h3>
-                <div class="input-group">
-                    <label for="lat2">Latitude (Morrison)</label>
-                    <input type="number" id="lat2" step="0.0001" value="39.6536">
-                </div>
-                <div class="input-group">
-                    <label for="lon2">Longitude (Morrison)</label>
-                    <input type="number" id="lon2" step="0.0001" value="-105.1911">
+            <button id="refreshBtn" class="primary-btn" onclick="fetchData()">Refresh forecast</button>
+
+            <div id="result"></div>
+        </div>
+
+        <!-- Tab 2: 15-Minute RRFS (Lower Location Only) -->
+        <div class="tab-content" id="tab-content-15min">
+            <div class="location-section" style="margin-bottom: 1.5rem;">
+                <h3>Lower Location (Morrison)</h3>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <div class="input-group" style="flex: 1; min-width: 200px;">
+                        <label for="lat2_15m">Latitude</label>
+                        <input type="number" id="lat2_15m" step="0.0001" value="39.6536" onchange="syncLocation2(this.value, 'lat')">
+                    </div>
+                    <div class="input-group" style="flex: 1; min-width: 200px;">
+                        <label for="lon2_15m">Longitude</label>
+                        <input type="number" id="lon2_15m" step="0.0001" value="-105.1911" onchange="syncLocation2(this.value, 'lon')">
+                    </div>
                 </div>
             </div>
-        </div>
-        
-        <button id="refreshBtn" class="primary-btn" onclick="fetchData()">Refresh forecast</button>
 
-        <div id="result"></div>
+            <button id="refresh15mBtn" class="primary-btn" onclick="fetch15MinData()">Refresh 15-Minute Forecast</button>
+
+            <div id="result-15min" style="display: none; margin-top: 1.5rem;"></div>
+        </div>
     </div>
 
     <script>
@@ -389,6 +469,45 @@
         let currentPlotData = null;
         let currentFullRange = null;
         let currentSunriseWindows = [];
+        let hasLoaded15Min = false;
+
+        function syncLocation2(val, type) {
+            if (type === 'lat') {
+                const el1 = document.getElementById('lat2');
+                const el2 = document.getElementById('lat2_15m');
+                if (el1) el1.value = val;
+                if (el2) el2.value = val;
+            } else if (type === 'lon') {
+                const el1 = document.getElementById('lon2');
+                const el2 = document.getElementById('lon2_15m');
+                if (el1) el1.value = val;
+                if (el2) el2.value = val;
+            }
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.nav-tab').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            const btn = document.getElementById(`tab-btn-${tabName}`);
+            const content = document.getElementById(`tab-content-${tabName}`);
+            if (btn) btn.classList.add('active');
+            if (content) content.classList.add('active');
+
+            if (tabName === 'hourly') {
+                const p = document.getElementById('plots');
+                if (p && p.data) Plotly.Plots.resize('plots');
+            } else if (tabName === '15min') {
+                const ps = document.getElementById('plot-15m-speed');
+                const pg = document.getElementById('plot-15m-gust');
+                if (ps && ps.data) Plotly.Plots.resize('plot-15m-speed');
+                if (pg && pg.data) Plotly.Plots.resize('plot-15m-gust');
+
+                if (!hasLoaded15Min) {
+                    fetch15MinData();
+                }
+            }
+        }
 
         function getPointsInWindow(arr1, arr2, windowStart, windowEnd) {
             const vals = [];
@@ -545,6 +664,14 @@
             const deg = (Number(degrees) % 360 + 360) % 360;
             const targetArrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
             return targetArrows[Math.round(((deg + 180) % 360) / 45) % 8];
+        }
+
+        function formatWindDirFull(degrees) {
+            if (degrees === null || degrees === undefined || isNaN(degrees)) return '--';
+            const deg = Math.round((Number(degrees) % 360 + 360) % 360);
+            const card = getWindDir(degrees);
+            const arrow = formatWindDir(degrees);
+            return arrow ? `${arrow} ${card} (${deg}°)` : `${card} (${deg}°)`;
         }
 
         function formatLocalDateTime(date) {
@@ -772,7 +899,7 @@
                     const valPBLH1 = (pPBLH1 !== null && pPBLH1 !== undefined) ? Math.round(pPBLH1) : '--';
                     const pWS1 = windSpeed1[i];
                     const valWS1 = (pWS1 !== null && pWS1 !== undefined) ? pWS1.toFixed(1) : '--';
-                    const valWD1 = getWindDir(windDir1[i]);
+                    const valWD1 = formatWindDirFull(windDir1[i]);
 
                     // Location 2 Data
                     let valTemp2 = '--', valSky2 = '--';
@@ -795,7 +922,7 @@
                     const valPBLH2 = (pPBLH2 !== null && pPBLH2 !== undefined) ? Math.round(pPBLH2) : '--';
                     const pWS2 = windSpeed2[i];
                     const valWS2 = (pWS2 !== null && pWS2 !== undefined) ? pWS2.toFixed(1) : '--';
-                    const valWD2 = getWindDir(windDir2[i]);
+                    const valWD2 = formatWindDirFull(windDir2[i]);
 
                     plotData.times.push(date);
                     plotData.pblh1.push(pPBLH1);
@@ -1031,6 +1158,229 @@
                 if (btn) {
                     btn.disabled = false;
                     btn.textContent = 'Refresh forecast';
+                }
+            }
+        }
+
+        async function fetch15MinData() {
+            const btn = document.getElementById('refresh15mBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Refreshing 15-min forecast...';
+            }
+
+            const lat2 = document.getElementById('lat2').value;
+            const lon2 = document.getElementById('lon2').value;
+            const resDiv = document.getElementById('result-15min');
+
+            resDiv.style.display = 'block';
+            resDiv.innerHTML = '<span class="loader">Querying NOAA RRFS 15-Minute Sub-Hourly model for Lower Location...</span>';
+
+            try {
+                // RRFS 15-minute configuration: full extent (18 hours = 72 fifteen-minute intervals)
+                const baseParams = "models=ncep_rrfs_conus&minutely_15=wind_speed_10m,wind_gusts_10m,wind_direction_10m&wind_speed_unit=mph&timezone=UTC&forecast_minutely_15=72&daily=sunrise";
+                const url = `https://api.open-meteo.com/v1/gfs?latitude=${lat2}&longitude=${lon2}&${baseParams}`;
+
+                const [resp] = await Promise.all([
+                    fetch(url, { cache: 'no-cache' }).then(r => r.json()),
+                    fetchModelMetadata()
+                ]);
+
+                if (!resp.minutely_15 || !resp.minutely_15.time) {
+                    throw new Error("Failed to load RRFS 15-minute data.");
+                }
+
+                const m = resp.minutely_15;
+                const count = Math.min(72, m.time.length);
+                const times = [];
+                const speeds = [];
+                const gusts = [];
+                const dirArrows = [];
+                let tableRows = '';
+
+                const sunriseData = (resp.daily && resp.daily.sunrise) || [];
+
+                for (let i = 0; i < count; i++) {
+                    const tStr = m.time[i];
+                    const date = new Date(tStr.endsWith('Z') ? tStr : tStr + 'Z');
+                    const ws = m.wind_speed_10m[i];
+                    const wg = m.wind_gusts_10m[i];
+                    const wd = m.wind_direction_10m[i];
+
+                    const arrow = formatWindDir(wd);
+                    const card = getWindDir(wd);
+
+                    times.push(date);
+                    speeds.push(ws);
+                    gusts.push(wg);
+                    dirArrows.push(arrow);
+
+                    const timeLabel = date.toLocaleString('en-US', {
+                        timeZone: 'America/Denver',
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        hour12: true,
+                        timeZoneName: 'short'
+                    });
+
+                    const wsDisp = (ws !== null && ws !== undefined) ? Number(ws).toFixed(1) : '--';
+                    const wgDisp = (wg !== null && wg !== undefined) ? Number(wg).toFixed(1) : '--';
+                    const dirDisp = formatWindDirFull(wd);
+
+                    tableRows += `<tr>
+                        <td class="time-col" style="border-right: 2px solid #cbd5e1;">${timeLabel}</td>
+                        <td style="font-weight:600; color:#c2410c;">${wsDisp}</td>
+                        <td style="font-weight:600; color:#b91c1c;">${wgDisp}</td>
+                        <td>${dirDisp}</td>
+                    </tr>`;
+                }
+
+                const updateStr = cachedMetadata && cachedMetadata.modTime 
+                    ? `${formatLocalDateTime(cachedMetadata.modTime)} ${formatRelativeTime(cachedMetadata.modTime)}` 
+                    : 'Available on status card above';
+                const cycleStr = cachedMetadata && cachedMetadata.initTime 
+                    ? `<span class="model-cycle-tag">${getUtcRun(cachedMetadata.initTime)}</span>` 
+                    : '';
+
+                let html = `
+                    <div class="active-model-banner">
+                        <div>
+                            <strong>Model:</strong> NOAA RRFS 15-Minute Sub-Hourly
+                            ${cycleStr}
+                            <span class="rrfs-badge" style="margin-left: 6px;">Full 18h Extent (72 steps)</span>
+                        </div>
+                        <div>
+                            <strong>Updated:</strong> ${updateStr}
+                        </div>
+                    </div>
+
+                    <div class="plot-box">
+                        <div id="plot-15m-speed"></div>
+                    </div>
+
+                    <div class="plot-box">
+                        <div id="plot-15m-gust"></div>
+                    </div>
+
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th style="border-right: 2px solid #cbd5e1;">Time (Mountain)</th>
+                                    <th>Wind Speed (mph) <span class="rrfs-badge">RRFS 15m</span></th>
+                                    <th>Wind Gusts (mph) <span class="rrfs-badge">RRFS 15m</span></th>
+                                    <th>Wind Dir</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${tableRows}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+
+                resDiv.innerHTML = html;
+
+                // Build vertical sunrise line if sunrise falls within the 18 hours
+                const tStart = times[0];
+                const tEnd = times[times.length - 1];
+                let shapes = [];
+                if (sunriseData && sunriseData.length > 0) {
+                    sunriseData.forEach(sr => {
+                        let srDate = new Date(sr.endsWith('Z') ? sr : sr + 'Z');
+                        if (!sr.includes('T')) srDate = new Date(sr);
+                        if (srDate >= tStart && srDate <= tEnd) {
+                            shapes.push({
+                                type: 'line',
+                                x0: srDate,
+                                x1: srDate,
+                                y0: 0,
+                                y1: 1,
+                                xref: 'x',
+                                yref: 'paper',
+                                line: {
+                                    color: 'orange',
+                                    width: 2,
+                                    dash: 'dot'
+                                }
+                            });
+                        }
+                    });
+                }
+
+                const traceSpeed = {
+                    x: times,
+                    y: speeds,
+                    customdata: dirArrows,
+                    name: 'Wind Speed',
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    line: { color: '#ff7f0e', width: 2.5 },
+                    marker: { size: 5, color: '#ff7f0e' },
+                    hovertemplate: '%{x}<br>%{y:.1f} mph %{customdata}<extra></extra>'
+                };
+
+                const layoutSpeed = {
+                    title: '15-Minute Sustained Wind Speed (Lower Location - Morrison)',
+                    height: 380,
+                    margin: { t: 50, b: 50, l: 50, r: 50 },
+                    showlegend: false,
+                    shapes: shapes,
+                    yaxis: {
+                        title: 'Wind Speed (mph)',
+                        rangemode: 'tozero'
+                    },
+                    xaxis: {
+                        type: 'date',
+                        range: [tStart, tEnd],
+                        hoverformat: '%a %b %e, %I:%M %p'
+                    }
+                };
+
+                const traceGust = {
+                    x: times,
+                    y: gusts,
+                    customdata: dirArrows,
+                    name: 'Wind Gusts',
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    line: { color: '#ef4444', width: 2.5, dash: 'dot' },
+                    marker: { size: 5, color: '#ef4444' },
+                    hovertemplate: '%{x}<br>%{y:.1f} mph %{customdata}<extra></extra>'
+                };
+
+                const layoutGust = {
+                    title: '15-Minute Wind Gusts (Lower Location - Morrison)',
+                    height: 380,
+                    margin: { t: 50, b: 50, l: 50, r: 50 },
+                    showlegend: false,
+                    shapes: shapes,
+                    yaxis: {
+                        title: 'Wind Gusts (mph)',
+                        rangemode: 'tozero'
+                    },
+                    xaxis: {
+                        type: 'date',
+                        range: [tStart, tEnd],
+                        hoverformat: '%a %b %e, %I:%M %p'
+                    }
+                };
+
+                Plotly.newPlot('plot-15m-speed', [traceSpeed], layoutSpeed, { responsive: true });
+                Plotly.newPlot('plot-15m-gust', [traceGust], layoutGust, { responsive: true });
+
+                hasLoaded15Min = true;
+
+            } catch (e) {
+                console.error(e);
+                resDiv.innerHTML = `<div class='error'>Error fetching 15-minute data: ${e.message}</div>`;
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Refresh 15-Minute Forecast';
                 }
             }
         }
