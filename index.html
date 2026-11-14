@@ -466,6 +466,7 @@
 
     <script>
         let cachedMetadata = null;
+        let cachedMetadata15m = null;
         let currentPlotData = null;
         let currentFullRange = null;
         let currentSunriseWindows = [];
@@ -705,24 +706,86 @@
             return `${h}z Run`;
         }
 
-        // Fetch model metadata for RRFS update time
-        async function fetchModelMetadata() {
-            const metaUrl = `https://api.open-meteo.com/data/ncep_rrfs_conus/static/meta.json?_=${Date.now()}`;
+        // Resilient fetch wrapper with timeout and automatic retry
+        async function fetchWithRetry(url, options = {}, retries = 2, timeoutMs = 8000) {
+            let lastError = null;
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                const controller = new AbortController();
+                let didTimeout = false;
+                const timer = setTimeout(() => {
+                    didTimeout = true;
+                    controller.abort();
+                }, timeoutMs);
+
+                try {
+                    const fetchOptions = {
+                        ...options,
+                        signal: controller.signal
+                    };
+                    const res = await fetch(url, fetchOptions);
+                    clearTimeout(timer);
+
+                    let data = null;
+                    try {
+                        data = await res.json();
+                    } catch (parseErr) {
+                        if (!res.ok) {
+                            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                        }
+                        throw new Error('Failed to parse JSON response from server.');
+                    }
+
+                    if (!res.ok) {
+                        const reason = (data && data.reason) ? data.reason : `HTTP ${res.status} ${res.statusText}`;
+                        throw new Error(reason);
+                    }
+                    if (data && data.error) {
+                        throw new Error(data.reason || 'Open-Meteo returned an error.');
+                    }
+                    return data;
+                } catch (err) {
+                    clearTimeout(timer);
+                    if (didTimeout) {
+                        lastError = new Error(`Connection timed out (${timeoutMs / 1000}s) reaching Open-Meteo API.`);
+                    } else {
+                        lastError = err;
+                    }
+                    if (attempt < retries) {
+                        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+                    }
+                }
+            }
+            throw lastError;
+        }
+
+        // Fetch model metadata for RRFS update time from Open-Meteo S3 bucket
+        async function fetchModelMetadata(domain = 'ncep_rrfs_conus') {
+            const metaUrl = `https://openmeteo.s3.amazonaws.com/data/${domain}/static/meta.json?_=${Date.now()}`;
             try {
-                const res = await fetch(metaUrl, { cache: 'no-store' });
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 6000);
+                const res = await fetch(metaUrl, { cache: 'no-store', signal: controller.signal });
+                clearTimeout(timer);
                 if (res.ok) {
                     const data = await res.json();
-                    cachedMetadata = {
+                    const meta = {
                         initTime: data.last_run_initialisation_time ? new Date(data.last_run_initialisation_time * 1000) : null,
                         modTime: (data.last_run_modification_time || data.last_run_availability_time) ? new Date((data.last_run_modification_time || data.last_run_availability_time) * 1000) : null
                     };
-                    updateMetadataUI();
+                    if (domain === 'ncep_rrfs_conus_15min') {
+                        cachedMetadata15m = meta;
+                    } else {
+                        cachedMetadata = meta;
+                        updateMetadataUI();
+                    }
+                    return meta;
                 }
             } catch (err) {
-                console.warn('Metadata fetch error:', err);
+                console.warn(`Metadata fetch error for ${domain}:`, err);
                 const timeEl = document.getElementById('modelUpdateTime');
                 if (timeEl && !cachedMetadata) timeEl.textContent = 'Update time check unavailable';
             }
+            return null;
         }
 
         function updateMetadataUI() {
@@ -745,18 +808,24 @@
         // Helper to query NWS Grid Data
         async function getNWSData(lat, lon) {
             try {
-                const ptRes = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 8000);
+                const ptRes = await fetch(`https://api.weather.gov/points/${lat},${lon}`, { signal: controller.signal });
+                clearTimeout(timer);
                 if (!ptRes.ok) return null;
                 const ptData = await ptRes.json();
                 
                 const gridUrl = ptData.properties.forecastGridData;
-                const gridRes = await fetch(gridUrl);
+                const controller2 = new AbortController();
+                const timer2 = setTimeout(() => controller2.abort(), 8000);
+                const gridRes = await fetch(gridUrl, { signal: controller2.signal });
+                clearTimeout(timer2);
                 if (!gridRes.ok) return null;
                 const gridData = await gridRes.json();
                 
                 return gridData.properties;
             } catch (err) {
-                console.error("NWS Fetch Error:", err);
+                console.warn("NWS Fetch Error:", err);
                 return null;
             }
         }
@@ -814,14 +883,14 @@
                 const url2 = `https://api.open-meteo.com/v1/gfs?latitude=${lat2}&longitude=${lon2}&${baseParams}`;
 
                 const [resp1, resp2, nws1, nws2] = await Promise.all([
-                    fetch(url1, { cache: 'no-cache' }).then(r => r.json()),
-                    fetch(url2, { cache: 'no-cache' }).then(r => r.json()),
+                    fetchWithRetry(url1, { cache: 'no-cache' }),
+                    fetchWithRetry(url2, { cache: 'no-cache' }),
                     getNWSData(lat1, lon1),
                     getNWSData(lat2, lon2),
-                    fetchModelMetadata()
+                    fetchModelMetadata('ncep_rrfs_conus')
                 ]);
 
-                if (!resp1.hourly || !resp2.hourly) {
+                if (!resp1 || !resp1.hourly || !resp2 || !resp2.hourly) {
                     throw new Error("Failed to load RRFS Hourly data.");
                 }
 
@@ -1182,11 +1251,11 @@
                 const url = `https://api.open-meteo.com/v1/gfs?latitude=${lat2}&longitude=${lon2}&${baseParams}`;
 
                 const [resp] = await Promise.all([
-                    fetch(url, { cache: 'no-cache' }).then(r => r.json()),
-                    fetchModelMetadata()
+                    fetchWithRetry(url, { cache: 'no-cache' }),
+                    fetchModelMetadata('ncep_rrfs_conus_15min')
                 ]);
 
-                if (!resp.minutely_15 || !resp.minutely_15.time) {
+                if (!resp || !resp.minutely_15 || !resp.minutely_15.time) {
                     throw new Error("Failed to load RRFS 15-minute data.");
                 }
 
@@ -1238,11 +1307,12 @@
                     </tr>`;
                 }
 
-                const updateStr = cachedMetadata && cachedMetadata.modTime 
-                    ? `${formatLocalDateTime(cachedMetadata.modTime)} ${formatRelativeTime(cachedMetadata.modTime)}` 
+                const meta15 = cachedMetadata15m || cachedMetadata;
+                const updateStr = meta15 && meta15.modTime 
+                    ? `${formatLocalDateTime(meta15.modTime)} ${formatRelativeTime(meta15.modTime)}` 
                     : 'Available on status card above';
-                const cycleStr = cachedMetadata && cachedMetadata.initTime 
-                    ? `<span class="model-cycle-tag">${getUtcRun(cachedMetadata.initTime)}</span>` 
+                const cycleStr = meta15 && meta15.initTime 
+                    ? `<span class="model-cycle-tag">${getUtcRun(meta15.initTime)}</span>` 
                     : '';
 
                 let html = `
@@ -1387,9 +1457,9 @@
 
         // Initialize metadata on load
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', fetchModelMetadata);
+            document.addEventListener('DOMContentLoaded', () => fetchModelMetadata('ncep_rrfs_conus'));
         } else {
-            fetchModelMetadata();
+            fetchModelMetadata('ncep_rrfs_conus');
         }
 
         // Periodically refresh relative time display every minute
